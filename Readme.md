@@ -62,6 +62,7 @@ You can modify the `TEST_DOMAINS` list within the script to include other domain
 *   **DNS Server Detection:** Reliably detecting all configured DNS servers across all operating systems from within Python can be challenging. The script uses common methods but might not always be 100% accurate, especially on Windows for complex network configurations.
 *   **`requests` Dependency:** Full HTTP(S) checking, including CUII redirect detection, requires the `requests` library.
 *   **Interpretation:** The results are indicators. A "blocked" status for a tracking domain might be intentional (e.g., due to an ad blocker). A CUII redirect is a strong sign of an ISP block.
+* Might differ from your **Browser Experience:** Even here a domain is flagged as unavailable, it might be accessiable in your browser or vice versa. Your browsers might use different DNS settings, then tested here.
 
 ## CUII
 
