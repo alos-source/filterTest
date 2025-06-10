@@ -52,6 +52,13 @@ The script will print information in several sections:
 
 Entries of the cuii list might result either in REDIRECTED_TO_CUII_NOTICE or NXDOMAIN. For NXDOMAIN-Entries, online URL-Scanners like [URLScan.io](https://urlscan.io/) might help verifying if the site is actually available.
 
+Additionally, the script will generate a text file named `filter_test_results_{hostname}_{timestamp}.txt` in the same directory where the script is run. This file contains:
+*   Timestamp of the test.
+*   Basic system information (OS, hostname).
+*   A list of domains found in the hosts file that are redirected to `0.0.0.0` or `127.0.0.1`.
+*   The configured DNS servers.
+*   A summary of the domain check results (currently a direct string representation of the internal summary dictionary).
+
 ## Customization
 
 You can modify the `TEST_DOMAINS` list within the script to include other domains you wish to test.
