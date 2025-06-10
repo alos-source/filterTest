@@ -29,15 +29,23 @@ TEST_DOMAINS = [
     "rtde.me", # Beispiel für eine Domain, die oft in Politischen-Kontexten verwendet wird
 ]
 
+# IP-Konstanten
+IP_NULL = "0.0.0.0"
+IP_LOCALHOST = "127.0.0.1"
+
 # Status-Konstanten für DNS-Auflösung
 DNS_STATUS_RESOLVED = "RESOLVED_OK"
-DNS_STATUS_BLOCKED_NULL = "BLOCKED_POINTS_TO_0.0.0.0"
-DNS_STATUS_BLOCKED_LOCALHOST = "BLOCKED_POINTS_TO_127.0.0.1"
+DNS_STATUS_BLOCKED_NULL = f"BLOCKED_POINTS_TO_{IP_NULL}"
+DNS_STATUS_BLOCKED_LOCALHOST = f"BLOCKED_POINTS_TO_{IP_LOCALHOST}"
 DNS_STATUS_FAILED_RESOLUTION = "FAILED_TO_RESOLVE"
 HTTP_STATUS_REDIRECTED_CUII = "REDIRECTED_TO_CUII_NOTICE"
 DNS_STATUS_ERROR = "RESOLUTION_ERROR"
 HTTP_REQUEST_ERROR = "HTTP_REQUEST_ERROR"
 
+# HTTP Konstanten
+HTTP_REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308} # Set für schnelle Prüfung
+REQUEST_TIMEOUT_SECONDS = 5
+DEFAULT_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
 
 def check_domain_accessibility(domain):
     """
@@ -55,9 +63,9 @@ def check_domain_accessibility(domain):
         resolved_ips_set = set(ip_addresses)
         ip_list_str = ", ".join(sorted(list(resolved_ips_set)))
 
-        if '0.0.0.0' in resolved_ips_set:
+        if IP_NULL in resolved_ips_set:
             return DNS_STATUS_BLOCKED_NULL, f"Points to {ip_list_str}"
-        if '127.0.0.1' in resolved_ips_set:
+        if IP_LOCALHOST in resolved_ips_set:
             return DNS_STATUS_BLOCKED_LOCALHOST, f"Points to {ip_list_str}"
 
         # Wenn DNS okay ist und 'requests' verfügbar ist, prüfe auf HTTP(S)-Weiterleitungen
@@ -68,10 +76,10 @@ def check_domain_accessibility(domain):
                     response = requests.get(
                         url_to_check,
                         allow_redirects=False, # Wichtig, um den Redirect selbst zu sehen
-                        timeout=5,
-                        headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+                        timeout=REQUEST_TIMEOUT_SECONDS,
+                        headers={'User-Agent': DEFAULT_USER_AGENT}
                     )
-                    if response.status_code in [301, 302, 303, 307, 308]: # HTTP Redirect Status Codes
+                    if response.status_code in HTTP_REDIRECT_STATUS_CODES:
                         location = response.headers.get('Location', '')
                         if 'notice.cuii.info' in location.lower():
                             return HTTP_STATUS_REDIRECTED_CUII, f"Redirects from {url_to_check} to {location}"
@@ -113,15 +121,11 @@ def check_hosts_file():
                 line = line.strip()
                 if not line or line.startswith('#'):
                     continue
-                match = re.match(r'^(127\.0\.0\.1|0\.0\.0\.0)\s+([^\s#]+)', line)
+                # Prüfe auf Zeilen, die mit 0.0.0.0 oder 127.0.0.1 beginnen, gefolgt von einem Domainnamen
+                match = re.match(rf'^({IP_LOCALHOST}|{IP_NULL})\s+([^\s#]+)', line)
                 if match:
                     domain = match.group(2)
-                    # Eine einfache Heuristik: Ist es eine bekannte Werbe-/Tracking-Domain?
-                    # Man könnte hier eine Liste von typischen Hosts-Blacklist-Einträgen pflegen.
-                    if any(test_domain in domain for test_domain in TEST_DOMAINS): # Rudimentärer Check
-                        blocked_domains.append(domain)
-                    # Oder einfach alle geblockten Domains anzeigen
-                    # blocked_domains.append(domain)
+                    blocked_domains.append(domain) # Alle gefundenen, blockierten Domains hinzufügen
     except Exception as e:
         print(f"Fehler beim Lesen der Hosts-Datei: {e}")
     return blocked_domains
@@ -158,36 +162,55 @@ def get_dns_servers():
             pass # ipconfig might not be available or command failed
     return list(set(dns_servers)) # Eindeutige Liste
 
+KNOWN_DNS_PROVIDER_PATTERNS = {
+    "Private IP (Router/lokaler Filter)": {
+        "check": lambda ip: re.match(r'^(10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.)', ip),
+        "note": "Dies könnte auf ein lokales Pi-hole, AdGuard Home oder einen Router-internen DNS hindeuten."
+    },
+    "AdGuard DNS": {
+        "check": lambda ip: ip in ["94.140.14.140", "94.140.14.141", "176.103.130.130", "176.103.130.131"],
+        "note": "AdGuard DNS filtert Werbung und Tracker."
+    },
+    "Google Public DNS": {
+        "check": lambda ip: ip in ["8.8.8.8", "8.8.4.4"],
+        "note": "Google Public DNS gefunden."
+    },
+    "Cloudflare DNS": {
+        "check": lambda ip: ip in ["1.1.1.1", "1.0.0.1"],
+        "note": "Cloudflare DNS gefunden."
+    }
+}
+
 def main():
     print("--- Prüfung von Internet-Sperrlisten-Indikatoren ---")
 
     # 1. Hosts-Datei prüfen
     print("\n[1] Hosts-Datei Prüfung:")
-    hosts_blocked_domains = check_hosts_file()
-    if hosts_blocked_domains:
-        print(f"  Potenziell geblockte Domains in der Hosts-Datei gefunden ({len(hosts_blocked_domains)}):")
-        for domain in hosts_blocked_domains[:10]: # Zeige nur die ersten 10
+    hosts_file_all_blocked = check_hosts_file()
+    if hosts_file_all_blocked:
+        print(f"  Domains in der Hosts-Datei, die auf '{IP_NULL}' oder '{IP_LOCALHOST}' zeigen ({len(hosts_file_all_blocked)}):")
+        for domain in hosts_file_all_blocked[:5]: # Zeige nur die ersten 5
             print(f"    - {domain}")
-        if len(hosts_blocked_domains) > 10:
-            print(f"    ... und {len(hosts_blocked_domains) - 10} weitere.")
-        print("  Dies deutet auf eine aktive Hosts-Datei-basierte Sperrliste hin.")
+        if len(hosts_file_all_blocked) > 5:
+            print(f"    ... und {len(hosts_file_all_blocked) - 5} weitere.")
+        
+        test_domains_in_hosts = [d for d in hosts_file_all_blocked if d in TEST_DOMAINS or any(td in d for td in TEST_DOMAINS)]
+        if test_domains_in_hosts:
+            print(f"  Davon sind folgende (oder verwandte) Domains auch Teil der aktuellen Test-Liste: {', '.join(test_domains_in_hosts[:5])}{'...' if len(test_domains_in_hosts) > 5 else ''}")
+        print("  Dies kann auf eine lokale Filterung durch die Hosts-Datei hindeuten.")
     else:
-        print("  Keine bekannten geblockten Einträge in der Hosts-Datei gefunden.")
+        print(f"  Keine Einträge in der Hosts-Datei gefunden, die Domains auf '{IP_NULL}' oder '{IP_LOCALHOST}' umleiten.")
 
     # 2. DNS-Server prüfen
     print("\n[2] Konfigurierte DNS-Server:")
     configured_dns = get_dns_servers()
     if configured_dns:
         print(f"  Ihre konfigurierten DNS-Server: {', '.join(configured_dns)}")
-        if any(re.match(r'^(10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.)', ip) for ip in configured_dns):
-            print("  Hinweis: Ein oder mehrere DNS-Server sind private IP-Adressen (z.B. 192.168.x.x).")
-            print("  Dies könnte auf ein lokales Pi-hole, AdGuard Home oder einen Router-internen DNS hindeuten.")
-        elif any(ip in ["94.140.14.140", "94.140.14.141", "176.103.130.130", "176.103.130.131"] for ip in configured_dns):
-            print("  Hinweis: AdGuard DNS-Server gefunden. AdGuard DNS filtert Werbung und Tracker.")
-        elif any(ip in ["8.8.8.8", "8.8.4.4"] for ip in configured_dns):
-            print("  Hinweis: Google Public DNS gefunden.")
-        elif any(ip in ["1.1.1.1", "1.0.0.1"] for ip in configured_dns):
-            print("  Hinweis: Cloudflare DNS gefunden.")
+        for ip in configured_dns:
+            for provider_name, data in KNOWN_DNS_PROVIDER_PATTERNS.items():
+                if data["check"](ip):
+                    print(f"  Hinweis für {ip}: {data['note']}")
+                    break 
     else:
         print("  Konnte keine DNS-Server ermitteln (oder Standard-Provider-DNS).")
 
