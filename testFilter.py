@@ -1,6 +1,7 @@
 import socket
 import platform
 import os
+import datetime
 import re
 try:
     import requests
@@ -181,7 +182,7 @@ KNOWN_DNS_PROVIDER_PATTERNS = {
     }
 }
 
-def main():
+def run_tests():
     print("--- Prüfung von Internet-Sperrlisten-Indikatoren ---")
 
     # 1. Hosts-Datei prüfen
@@ -224,6 +225,7 @@ def main():
     for domain in TEST_DOMAINS:
         status, detail = check_domain_accessibility(domain) # Geänderter Funktionsaufruf
         print(f"  {domain.ljust(30)}: {status} - {detail}")
+
         resolution_summary[status] = resolution_summary.get(status, 0) + 1
         
         if status in [DNS_STATUS_BLOCKED_NULL, DNS_STATUS_BLOCKED_LOCALHOST, DNS_STATUS_FAILED_RESOLUTION]:
@@ -266,6 +268,49 @@ def main():
 
     print("\n--- Ende der Prüfung ---")
     print("Beachten Sie: Dieses Programm kann nicht alle Arten von Sperrlisten erkennen (z.B. Browser-Erweiterungen).")
+
+    return {
+        "hosts_blocked": hosts_file_all_blocked,
+        "dns_servers": configured_dns,
+        "domain_results": resolution_summary,
+        "problematic_count": total_problematic_domains,
+        "cuii_count": cuii_redirect_count,
+        "dns_block_count": dns_level_block_count,
+        "http_error_count": http_error_count
+    }
+
+def main():
+    results = run_tests()
+
+    # Ergebnisdatei erstellen/beschreiben
+    hostname = socket.gethostname().replace(" ", "_").replace(".", "_") # Hostname für Dateinamen bereinigen
+    timestamp_str = datetime.datetime.now().isoformat().replace(":", "-").replace(".", "-")
+    output_filename = f"filter_test_results_{hostname}_{timestamp_str}.txt"
+
+    with open(output_filename, "w", encoding="utf-8") as outfile:
+        outfile.write(f"Ergebnisse der Internet-Sperrlistenprüfung\n")
+        outfile.write(f"Datum/Zeit: {timestamp_str}\n")
+        outfile.write(f"System: {platform.system()} {platform.release()} (Hostname: {socket.gethostname()})\n\n")
+
+        outfile.write("1. Hosts-Datei (geblockte Domains):\n")
+        if results["hosts_blocked"]:
+            for domain in results["hosts_blocked"]:
+                outfile.write(f"   - {domain}\n")
+        else:
+            outfile.write("   Keine Einträge gefunden.\n")
+
+        outfile.write("\n2. Konfigurierte DNS-Server:\n")
+        if results["dns_servers"]:
+            outfile.write(f"   {', '.join(results['dns_servers'])}\n")
+        else:
+            outfile.write("   Nicht ermittelbar.\n")
+
+        outfile.write("\n3. Ergebnisse der Domain-Prüfungen:\n")
+        # Hier könnte man die Zusammenfassungstabellen aus der Konsolenausgabe in ein datei-freundlicheres Format bringen
+        #  oder eine CSV-Ausgabe implementieren, wenn detailliertere Daten pro Domain gewünscht sind.
+        outfile.write(str(results["domain_results"]))  # Einfache Ausgabe des Dictionarys, für CSV müsste es anders formatiert werden
+
+    print(f"\nErgebnisse wurden in '{output_filename}' gespeichert.")
 
 if __name__ == "__main__":
     main()
